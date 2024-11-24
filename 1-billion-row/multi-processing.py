@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from collections import defaultdict
 import mmap
 import os
@@ -30,11 +30,16 @@ def calculate_boundaries(mm, num_chunks):
         current_pos = next_pos
     return boundaries
 
-def process_chunk(mm, start, end, chunk_id):
+def process_chunk(filename, start, end, chunk_id):
     print(f"[{datetime.now()}] Starting chunk {chunk_id}, processing {(end-start)/(1024):.2f} KB")
     start_time = time.time()
     results = defaultdict(lambda: {'min': float('inf'), 'max': float('-inf'), 'sum': 0, 'count': 0})
+    
+    # Open mmap within the function to avoid pickling issues
+    mm = open_mmap(filename)
     chunk = mm[start:end].decode('utf-8')
+    mm.close()  # Close mmap after reading the chunk
+    
     for line in chunk.split('\n'):
         if not line or line.startswith('#'):
             continue
@@ -62,28 +67,25 @@ def merge_results(chunk_results):
             final_results[station]['count'] += stats['count']
     return dict(final_results)
 
-def process_file(filename, num_threads=os.cpu_count()):
-    print(f"\n[{datetime.now()}] Starting processing with {num_threads} threads")
+def process_file(filename, num_processes=os.cpu_count()):
+    print(f"\n[{datetime.now()}] Starting processing with {num_processes} processes")
     start_time = time.time()
     
-    mm = open_mmap(filename)
-    boundaries = calculate_boundaries(mm, num_threads)
+    boundaries = calculate_boundaries(open_mmap(filename), num_processes)  # Open mmap only for boundaries
     
-    with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = [executor.submit(process_chunk, mm, start, end, i) 
+    with ProcessPoolExecutor(max_workers=num_processes) as executor:
+        futures = [executor.submit(process_chunk, filename, start, end, i) 
                   for i, (start, end) in enumerate(boundaries)]
         
         print(f"[{datetime.now()}] Processing chunks...")
         chunk_results = [future.result() for future in futures]
     
     final_results = merge_results(chunk_results)
-    mm.close()
     total_time = time.time() - start_time
     print(f"[{datetime.now()}] Total processing time: {total_time:.4f} seconds")
     file_size = get_file_size(filename)
     processing_speed = (file_size / (1024 * 1024)) / total_time  # MB/second
     print(f"[{datetime.now()}] Processing speed: {processing_speed:.2f} MB/second")
-    
     return final_results
 
 if __name__ == '__main__':

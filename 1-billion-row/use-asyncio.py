@@ -1,14 +1,15 @@
-from concurrent.futures import ThreadPoolExecutor
+import asyncio
 from collections import defaultdict
 import mmap
 import os
 import time
 from datetime import datetime
 
-def get_file_size(filename):
+async def get_file_size(filename):
     return os.path.getsize(filename)
 
-def open_mmap(filename):
+async def open_mmap(filename):
+    loop = asyncio.get_event_loop()
     with open(filename, 'rb') as f:
         return mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
 
@@ -30,11 +31,12 @@ def calculate_boundaries(mm, num_chunks):
         current_pos = next_pos
     return boundaries
 
-def process_chunk(mm, start, end, chunk_id):
+async def process_chunk(mm, start, end, chunk_id):
     print(f"[{datetime.now()}] Starting chunk {chunk_id}, processing {(end-start)/(1024):.2f} KB")
     start_time = time.time()
     results = defaultdict(lambda: {'min': float('inf'), 'max': float('-inf'), 'sum': 0, 'count': 0})
     chunk = mm[start:end].decode('utf-8')
+    
     for line in chunk.split('\n'):
         if not line or line.startswith('#'):
             continue
@@ -62,25 +64,21 @@ def merge_results(chunk_results):
             final_results[station]['count'] += stats['count']
     return dict(final_results)
 
-def process_file(filename, num_threads=os.cpu_count()):
-    print(f"\n[{datetime.now()}] Starting processing with {num_threads} threads")
+async def process_file(filename, num_chunks=os.cpu_count()):
+    print(f"\n[{datetime.now()}] Starting processing with {num_chunks} chunks")
     start_time = time.time()
     
-    mm = open_mmap(filename)
-    boundaries = calculate_boundaries(mm, num_threads)
+    mm = await open_mmap(filename)
+    boundaries = calculate_boundaries(mm, num_chunks)
     
-    with ThreadPoolExecutor(max_workers=num_threads) as executor:
-        futures = [executor.submit(process_chunk, mm, start, end, i) 
-                  for i, (start, end) in enumerate(boundaries)]
-        
-        print(f"[{datetime.now()}] Processing chunks...")
-        chunk_results = [future.result() for future in futures]
+    tasks = [process_chunk(mm, start, end, i) for i, (start, end) in enumerate(boundaries)]
+    chunk_results = await asyncio.gather(*tasks)
     
     final_results = merge_results(chunk_results)
     mm.close()
     total_time = time.time() - start_time
     print(f"[{datetime.now()}] Total processing time: {total_time:.4f} seconds")
-    file_size = get_file_size(filename)
+    file_size = await get_file_size(filename)
     processing_speed = (file_size / (1024 * 1024)) / total_time  # MB/second
     print(f"[{datetime.now()}] Processing speed: {processing_speed:.2f} MB/second")
     
@@ -88,7 +86,7 @@ def process_file(filename, num_threads=os.cpu_count()):
 
 if __name__ == '__main__':
     print(f"[{datetime.now()}] Starting weather station data processing...")
-    results = process_file('./weather_stations.csv')
+    results = asyncio.run(process_file('./weather_stations.csv'))
     
     print(f"\n[{datetime.now()}] Results:")
     print("-" * 60)
