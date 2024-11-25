@@ -4,6 +4,7 @@ import mmap
 import os
 import time
 from datetime import datetime
+import psutil  # Import psutil for memory monitoring
 
 def get_file_size(filename):
     return os.path.getsize(filename)
@@ -35,10 +36,9 @@ def process_chunk(filename, start, end, chunk_id):
     start_time = time.time()
     results = defaultdict(lambda: {'min': float('inf'), 'max': float('-inf'), 'sum': 0, 'count': 0})
     
-    # Open mmap within the function to avoid pickling issues
     mm = open_mmap(filename)
     chunk = mm[start:end].decode('utf-8')
-    mm.close()  # Close mmap after reading the chunk
+    mm.close()
     
     for line in chunk.split('\n'):
         if not line or line.startswith('#'):
@@ -71,7 +71,7 @@ def process_file(filename, num_processes=os.cpu_count()):
     print(f"\n[{datetime.now()}] Starting processing with {num_processes} processes")
     start_time = time.time()
     
-    boundaries = calculate_boundaries(open_mmap(filename), num_processes)  # Open mmap only for boundaries
+    boundaries = calculate_boundaries(open_mmap(filename), num_processes)
     
     with ProcessPoolExecutor(max_workers=num_processes) as executor:
         futures = [executor.submit(process_chunk, filename, start, end, i) 
@@ -82,7 +82,13 @@ def process_file(filename, num_processes=os.cpu_count()):
     
     final_results = merge_results(chunk_results)
     total_time = time.time() - start_time
+    
+    # Monitor memory usage
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    
     print(f"[{datetime.now()}] Total processing time: {total_time:.4f} seconds")
+    print(f"[{datetime.now()}] Memory usage: {memory_info.rss / (1024 * 1024):.2f} MB")  # RSS in bytes
     file_size = get_file_size(filename)
     processing_speed = (file_size / (1024 * 1024)) / total_time  # MB/second
     print(f"[{datetime.now()}] Processing speed: {processing_speed:.2f} MB/second")

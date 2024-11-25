@@ -4,6 +4,7 @@ import mmap
 import os
 import time
 from datetime import datetime
+import psutil  # Import psutil for memory monitoring
 
 async def get_file_size(filename):
     return os.path.getsize(filename)
@@ -77,7 +78,13 @@ async def process_file(filename, num_chunks=os.cpu_count()):
     final_results = merge_results(chunk_results)
     mm.close()
     total_time = time.time() - start_time
+    
+    # Monitor memory usage
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    
     print(f"[{datetime.now()}] Total processing time: {total_time:.4f} seconds")
+    print(f"[{datetime.now()}] Memory usage: {memory_info.rss / (1024 * 1024):.2f} MB")  # RSS in bytes
     file_size = await get_file_size(filename)
     processing_speed = (file_size / (1024 * 1024)) / total_time  # MB/second
     print(f"[{datetime.now()}] Processing speed: {processing_speed:.2f} MB/second")
